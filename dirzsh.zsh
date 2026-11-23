@@ -43,8 +43,8 @@ $ID:notify-test() {
 }
 $ID:prefs() {
     if [ -e ./host/vncready ]; then
-        $ID:dbus-docker gnome-extensions prefs quick-settings-tweaks@qwreey
+        $ID:dbus-docker gnome-extensions prefs quick-settings-tweaks@ddvals
     else
-        gnome-extensions prefs quick-settings-tweaks@qwreey
+        gnome-extensions prefs quick-settings-tweaks@ddvals
     fi
 }

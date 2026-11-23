@@ -4,6 +4,6 @@ export default {
     isGithubBuild: false,
     version: "unknown",
     buildNumber: 0,
-    baseGTypeName: "quick-settings-tweaks_",
+    baseGTypeName: "ddvals-tweaks_",
     loggerPrefix: "[quick-settings-tweaks]",
 }

@@ -39,10 +39,14 @@ export class OverlayMenu extends FeatureBase {
 		const targetHeight = outerHeight - menu.box.marginTop
 		let offsetY: number
 		if (Global.QuickSettingsBox.height < targetHeight && this.overflowAnchor != "center") {
+			// When menu is taller than Quick Settings box and anchor is set
 			if (this.overflowAnchor == "top") {
+				// Top anchor: menu top aligns with box top, overflows downward
 				offsetY = 0
 			} else {
-				offsetY = Global.QuickSettingsBox.height - targetHeight
+				// Bottom anchor: menu bottom aligns with box bottom, overflows upward
+				// Ensure offsetY doesn't go negative to prevent menu from positioning above the box
+				offsetY = Math.max(0, Global.QuickSettingsBox.height - targetHeight)
 			}
 		} else {
 			offsetY = Math.floor((Global.QuickSettingsBox.height - targetHeight) / 2)
@@ -74,6 +78,7 @@ export class OverlayMenu extends FeatureBase {
 		if (!isOpen) return
 
 		const coords = this.getCoords(menu)
+		this.xconstraint.offset = coords.offsetX
 		this.yconstraint.offset = coords.offsetY
 
 		if (this.duration) {
@@ -119,15 +124,18 @@ export class OverlayMenu extends FeatureBase {
 		if (this.width) {
 			menu.actor.width = this.width
 			menu.actor.x_expand = false
+			menu.actor.x_align = Clutter.ActorAlign.CENTER
 		}
 		maid.connectJob(menu.box, "notify::height", ()=>{
 			if (!menu.isOpen) return
 			const coords = this.getCoords(menu)
 			this.yconstraint.offset = coords.offsetY
+			this.xconstraint.offset = coords.offsetX
 		})
 	}
 
 	tracker: QuickSettingsMenuTracker
+	xconstraint: Clutter.BindConstraint
 	yconstraint: Clutter.BindConstraint
 	override reload(changedKey?: string): void {
 		if (changedKey == "overlay-menu-animate-duration") return
@@ -138,18 +146,27 @@ export class OverlayMenu extends FeatureBase {
 	override onLoad(): void {
 		if (!this.enabled) return
 
-		// Offset handle
+		// Offset handle for Y
 		this.yconstraint = new Clutter.BindConstraint({
 			coordinate: Clutter.BindCoordinate.Y,
 			// @ts-ignore Box pointer is private
 			source: Global.QuickSettingsMenu._boxPointer,
 		})
-
-		// Disable Y sync (overlay y offset)
+		
+		// Offset handle for X
+		this.xconstraint = new Clutter.BindConstraint({
+			coordinate: Clutter.BindCoordinate.X,
+			// @ts-ignore Box pointer is private
+			source: Global.QuickSettingsMenu._boxPointer,
+		})
+		
+		// Disable default sync (overlay x&y offset)
 		// @ts-ignore Overlay is private field
 		Global.QuickSettingsMenu._overlay.get_constraints()[0].enabled = false
 		// @ts-ignore Overlay is private field
 		Global.QuickSettingsMenu._overlay.add_constraint(this.yconstraint)
+		// @ts-ignore Overlay is private field
+		Global.QuickSettingsMenu._overlay.add_constraint(this.xconstraint)
 
 		// Disable Placeholder height sync (grid height increase)
 		// @ts-ignore Overlay is private field
@@ -175,5 +192,7 @@ export class OverlayMenu extends FeatureBase {
 		Global.QuickSettingsGrid.layout_manager._overlay.get_constraints()[0].enabled = true
 		// @ts-ignore Overlay is private field
 		Global.QuickSettingsMenu._overlay.remove_constraint(this.yconstraint)
+		// @ts-ignore Overlay is private field
+		Global.QuickSettingsMenu._overlay.remove_constraint(this.xconstraint)
 	}
 }
