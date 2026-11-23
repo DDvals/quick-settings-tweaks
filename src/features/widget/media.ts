@@ -736,8 +736,12 @@ class MediaItem extends MessageList.Message {
 	}
 
 	addEventStop<T extends Clutter.Actor>(actor: T): T {
-		actor.connect("button-press-event", () => Clutter.EVENT_STOP)
-		actor.connect("button-release-event", () => Clutter.EVENT_STOP)
+		// NOTE: intentionally does nothing.
+		// Connecting button-press/release-event -> EVENT_STOP here (as an
+		// upstream PR once did) breaks media controls on GNOME 49+ where
+		// St.Button emits ::clicked through Clutter.PressGesture instead of
+		// the legacy button event chain. Nested St.Button semantics already
+		// keep clicks contained, so no stop wiring is needed.
 		return actor
 	}
 }
