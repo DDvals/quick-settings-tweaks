@@ -721,12 +721,37 @@ class MediaItem extends MessageList.Message {
 		})
 	}
 
-	// Pass all gesture actions to the parent
-	vfunc_button_press_event(_event: Clutter.Event): boolean {
-		return Clutter.EVENT_PROPAGATE
+	// Whether a press/release landed on one of this item's interactive
+	// controls (header, media buttons, seek slider) rather than the free
+	// media area. Controls must not bubble presses up into MediaList's
+	// drag machinery, while presses on the free area should keep starting
+	// the swipe-drag.
+	_isPressOnControl(event: Clutter.Event): boolean {
+		const source = (event as any).get_source?.() ?? (event as any).get_source_actor?.()
+		if (!source) return false
+		const controls = [
+			(this as any)._header,
+			...(((this as any)._mediaControls?.get_children?.() ?? [])),
+			this._progressControl?._slider,
+		].filter(control => control != null)
+		let actor: any = source
+		while (actor && actor !== this && actor.get_parent) {
+			if (controls.includes(actor)) return true
+			actor = actor.get_parent()
+		}
+		return false
 	}
-	vfunc_button_release_event(_event: Clutter.Event): boolean {
-		return Clutter.EVENT_PROPAGATE
+
+	// Pass all gesture actions to the parent, except presses on controls
+	vfunc_button_press_event(event: Clutter.Event): boolean {
+		return this._isPressOnControl(event)
+			? Clutter.EVENT_STOP
+			: Clutter.EVENT_PROPAGATE
+	}
+	vfunc_button_release_event(event: Clutter.Event): boolean {
+		return this._isPressOnControl(event)
+			? Clutter.EVENT_STOP
+			: Clutter.EVENT_PROPAGATE
 	}
 	vfunc_motion_event(_event: Clutter.Event): boolean {
 		return Clutter.EVENT_PROPAGATE
