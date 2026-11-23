@@ -134,12 +134,12 @@ function build() {
 }
 
 function enable() {
-	gnome-extensions enable quick-settings-tweaks@qwreey
+	gnome-extensions enable quick-settings-tweaks@ddvals
 }
 
 function install() {
 	gnome-extensions install\
-		target/quick-settings-tweaks@qwreey.shell-extension.zip\
+		target/quick-settings-tweaks@ddvals.shell-extension.zip\
 		--force
 	[ "$?" != "0" ] && echo "Failed to install extension" && return 1
 	echo "Extension was installed. logout and login shell, and check extension list."
@@ -207,7 +207,7 @@ function create-release() {
 	get-full-version
 	update-metadata-version
 	VERSION=$VERSION BUILD_NUMBER=$BUILD_NUMBER build
-	cp target/quick-settings-tweaks@qwreey.shell-extension.zip target/$VERSION-$TARGET.zip
+	cp target/quick-settings-tweaks@ddvals.shell-extension.zip target/$VERSION-$TARGET.zip
 }
 
 function dev() {
