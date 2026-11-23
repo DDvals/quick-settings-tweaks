@@ -17,7 +17,7 @@ import { Rgb } from "../../libs/shared/colors.js"
 import { getImageMeanColor } from "../../libs/shared/imageUtils.js"
 import { lerp } from "../../libs/shared/jsUtils.js"
 import { Drag, Scroll } from "../../libs/shell/gesture.js"
-import { RoundClipEffect } from "../../libs/shell/effects.js"
+import { createRoundClipEffect, type RoundClipEffect } from "../../libs/shell/effects.js"
 import { StyledSlider } from "../../libs/shell/styler.js"
 import Global from "../../global.js"
 import Logger from "../../libs/shared/logger.js"
@@ -848,7 +848,7 @@ class MediaList extends St.BoxLayout {
 		}
 
 		// Enabled
-		const effect = this._effect = new RoundClipEffect()
+		const effect = this._effect = createRoundClipEffect()
 		effect.enabled = false
 		this.add_effect_with_name("round-clip", effect)
 		effect.connectObject("notify::enabled", ()=>{

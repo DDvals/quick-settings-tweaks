@@ -8,9 +8,9 @@ import Global from '../../global.js'
 // Shell.GLSLEffect was removed in GNOME Shell 51, where its role is taken over
 // by Clutter.ShaderEffect with the get_static_snippet vfunc
 // (see https://gitlab.gnome.org/GNOME/gnome-shell and PR #247).
-// Detect which API this shell provides at load time and patch the matching
-// vfunc onto the prototype BEFORE registerClass (GJS validates vfunc
-// overrides at registration, and throws if the base class lacks the vfunc).
+// GJS only hooks vfunc overrides declared in the class body (registering a
+// missing vfunc throws), so both variants must be separate registered classes;
+// the matching one is chosen at load time.
 const useGLSLEffect = (Shell as any).GLSLEffect != null
 
 type CornersCfg = {
@@ -19,11 +19,9 @@ type CornersCfg = {
 	smoothing: number,
 }
 
-const BaseClass: any = useGLSLEffect ? (Shell as any).GLSLEffect : Clutter.ShaderEffect
-
 // Uniform values shared by both backends (GLSLEffect & ShaderEffect paths)
 function computeUniformValues (
-	this_unknown: any,
+	actor: any,
 	scale_factor: number,
 	corners_cfg: CornersCfg,
 	outer_bounds: { x1: number, x2: number, y1: number, y2: number },
@@ -58,7 +56,7 @@ function computeUniformValues (
 		inner_radius = 0.0
 	}
 
-	pixel_step ??= [1 / this_unknown.get_width(), 1 / this_unknown.get_height()]
+	pixel_step ??= [1 / actor.get_width(), 1 / actor.get_height()]
 
 	// Setup with squircle shape
 	let exponent = smoothing * 10.0 + 2.0
@@ -71,7 +69,7 @@ function computeUniformValues (
 	inner_radius *= radius / outer_radius
 
 	return {
-		bounds: [/* dims=4 */ ...bounds],
+		bounds: [...bounds],
 		inner_bounds: [...inner_bounds],
 		pixel_step: [...pixel_step],
 		border_width: [border_width],
@@ -88,82 +86,116 @@ const uniformDimensions: Record<string, [number, number]> = {
 	border_color: [4, 4], inner_clip_radius: [1, 1],
 }
 
-export class RoundClipEffect extends BaseClass {
-	// Lazily created uniform location cache (legacy GLSLEffect path only)
-	_staticLocations: Record<string, number> | null = null
+// Legacy path (GNOME <= 50): Shell.GLSLEffect with GLSL snippet pipeline
+const _RoundClipEffectLegacy = useGLSLEffect ? GObject.registerClass(
+	class RoundClipEffectLegacy extends (Shell as any).GLSLEffect {
+		// Lazily created uniform location cache
+		static locations: Record<string, number> | null = null
 
-	getUniformLocation (name: string): number {
-		if (!this._staticLocations) {
-			const location: Record<string, number> = {}
-			for (const key in uniformDimensions) {
-				location[key] = this.get_uniform_location(key)
+		vfunc_build_pipeline (): void {
+			const [declarations, code] = Global.GetShader("media/rounded_corners.frag")
+			this.add_glsl_snippet(
+				// FIXME: waitting for type definition update
+				Cogl.SnippetHook.FRAGMENT as any,
+				declarations,
+				code,
+				false
+			)
+		}
+
+		vfunc_paint_target (node: Clutter.PaintNode, ctx: Clutter.PaintContext) {
+			// Reset to default blend string.
+			this.get_pipeline()?.set_blend(
+				'RGBA = ADD(SRC_COLOR, DST_COLOR*(1-SRC_COLOR[A]))'
+			)
+			super.vfunc_paint_target(node, ctx)
+		}
+
+		updateUniforms (
+			scale_factor: number,
+			corners_cfg: CornersCfg,
+			outer_bounds: { x1: number, x2: number, y1: number, y2: number },
+			border?: {
+				width: number
+				color: [number, number, number, number]
+			},
+			pixel_step?: [number, number]
+		) {
+			const values = computeUniformValues((this as any).actor ?? this,
+				scale_factor, corners_cfg, outer_bounds, border, pixel_step)
+			if (!RoundClipEffectLegacy.locations) {
+				const locations: Record<string, number> = {}
+				for (const key in uniformDimensions) {
+					locations[key] = this.get_uniform_location(key)
+				}
+				RoundClipEffectLegacy.locations = locations
 			}
-			this._staticLocations = location
+			for (const key in values) {
+				// (location, count, ...values) signature on GLSLEffect
+				this.set_uniform_float(RoundClipEffectLegacy.locations[key],
+					uniformDimensions[key][1], (values as any)[key])
+			}
+			this.queue_repaint()
 		}
-		return this._staticLocations[name]
 	}
+) : null
 
-	private setUniform (name: string, values: number[]) {
-		const [size, count] = uniformDimensions[name]
-		if (useGLSLEffect) {
-			this.set_uniform_float(this.getUniformLocation(name), count, values)
-		} else {
-			(this as any).set_uniform_float(name, size, count, values)
+// New path (GNOME >= 51): Clutter.ShaderEffect with static snippet
+const _RoundClipEffectNew = !useGLSLEffect ? GObject.registerClass(
+	class RoundClipEffectNew extends Clutter.ShaderEffect {
+		vfunc_get_static_snippet (): any {
+			const [declarations, code] = Global.GetShader("media/rounded_corners.frag")
+			const snippet = new (Cogl as any).Snippet((Cogl as any).SnippetHook.FRAGMENT, declarations, code)
+			return snippet
 		}
-	}
 
-	updateUniforms (
-		scale_factor: number,
-		corners_cfg: CornersCfg,
-		outer_bounds: { x1: number, x2: number, y1: number, y2: number },
-		border?: {
-			width: number
-			color: [number, number, number, number]
-		},
-		pixel_step?: [number, number]
-	) {
-		const values = computeUniformValues.call((this as any).actor ?? this,
-			scale_factor, corners_cfg, outer_bounds, border, pixel_step)
-		for (const key in values) {
-			this.setUniform(key, (values as any)[key])
+		vfunc_paint_target (node: Clutter.PaintNode, ctx: Clutter.PaintContext) {
+			// Reset to default blend string.
+			const pipeline = (this as any).get_pipeline()
+			if (pipeline) {
+				pipeline.set_blend('RGBA = ADD(SRC_COLOR, DST_COLOR*(1-SRC_COLOR[A]))')
+			}
+			super.vfunc_paint_target(node, ctx)
 		}
-		this.queue_repaint()
-	}
 
-	vfunc_paint_target (node: Clutter.PaintNode, ctx: Clutter.PaintContext) {
-		// Reset to default blend string.
-		const pipeline = (this as any).get_pipeline()
-		if (pipeline) {
-			pipeline.set_blend('RGBA = ADD(SRC_COLOR, DST_COLOR*(1-SRC_COLOR[A]))')
+		updateUniforms (
+			scale_factor: number,
+			corners_cfg: CornersCfg,
+			outer_bounds: { x1: number, x2: number, y1: number, y2: number },
+			border?: {
+				width: number
+				color: [number, number, number, number]
+			},
+			pixel_step?: [number, number]
+		) {
+			const values = computeUniformValues((this as any).actor ?? this,
+				scale_factor, corners_cfg, outer_bounds, border, pixel_step)
+			for (const key in values) {
+				// (name, size, count, values) signature on ShaderEffect
+				;(this as any).set_uniform_float(key,
+					uniformDimensions[key][0], uniformDimensions[key][1],
+					(values as any)[key])
+			}
+			this.queue_repaint()
 		}
-		super.vfunc_paint_target(node, ctx)
 	}
+) : null
+
+/**
+ * Rounded corner clipping effect, compatible with both legacy
+ * (Shell.GLSLEffect, GNOME <= 50) and new (Clutter.ShaderEffect, GNOME 51+)
+ * shader APIs. Consumers only need: new RoundClipEffect(), .updateUniforms(),
+ * and the Clutter.Effect base members.
+ */
+export type RoundClipEffect = any
+
+// Chosen once at load time; both candidates are already registered above.
+const RoundClipEffectClass: any = useGLSLEffect ? _RoundClipEffectLegacy : _RoundClipEffectNew
+
+export function createRoundClipEffect (): any {
+	return new RoundClipEffectClass()
 }
-
-// Inject the version-specific vfunc override before registration.
-const roundClipPrototype = RoundClipEffect.prototype as any
-if (useGLSLEffect) {
-	// legacy path (GNOME <= 50)
-	roundClipPrototype.vfunc_build_pipeline = function (
-		this: any
-	) {
-		const [declarations, code] = Global.GetShader("media/rounded_corners.frag")
-		this.add_glsl_snippet(
-			// FIXME: waitting for type definition update
-			(Cogl as any).SnippetHook.FRAGMENT,
-			declarations,
-			code,
-			false
-		)
-	}
-} else {
-	// GNOME 51+ path
-	roundClipPrototype.vfunc_get_static_snippet = function (): any {
-		const [declarations, code] = Global.GetShader("media/rounded_corners.frag")
-		const snippet = new (Cogl as any).Snippet((Cogl as any).SnippetHook.FRAGMENT, declarations, code)
-		return snippet
-	}
+export function roundClipEffectClass (): any {
+	return RoundClipEffectClass
 }
-
-GObject.registerClass(RoundClipEffect)
 // #endregion RoundClipEffect
