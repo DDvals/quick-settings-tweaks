@@ -17,7 +17,7 @@ import { Rgb } from "../../libs/shared/colors.js"
 import { getImageMeanColor } from "../../libs/shared/imageUtils.js"
 import { lerp } from "../../libs/shared/jsUtils.js"
 import { Drag, Scroll } from "../../libs/shell/gesture.js"
-import { RoundClipEffect } from "../../libs/shell/effects.js"
+import { createRoundClipEffect, type RoundClipEffect } from "../../libs/shell/effects.js"
 import { StyledSlider } from "../../libs/shell/styler.js"
 import Global from "../../global.js"
 import Logger from "../../libs/shared/logger.js"
@@ -721,6 +721,29 @@ class MediaItem extends MessageList.Message {
 		})
 	}
 
+	// Interactive children of this item (header, media buttons, seek slider)
+	_interactiveControls(): any[] {
+		return [
+			(this as any)._header,
+			...(((this as any)._mediaControls?.get_children?.() ?? [])),
+			this._progressControl?._slider,
+		].filter((control: any) => control != null && !control.is_finalized)
+	}
+
+	// Whether the press/release point lies within an interactive control.
+	// Uses geometric hit-testing: GNOME 50 no longer delivers a usable
+	// event.get_source() here (observed undefined in-shell).
+	_isPointOnControl(event: Clutter.Event): boolean {
+		const [gx, gy] = event.get_coords()
+		for (const control of this._interactiveControls()) {
+			const [x, y] = control.transform_stage_point(gx, gy)
+			if (x >= 0 && y >= 0 && x <= control.width && y <= control.height) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Pass all gesture actions to the parent
 	vfunc_button_press_event(_event: Clutter.Event): boolean {
 		return Clutter.EVENT_PROPAGATE
@@ -736,8 +759,12 @@ class MediaItem extends MessageList.Message {
 	}
 
 	addEventStop<T extends Clutter.Actor>(actor: T): T {
-		actor.connect("button-press-event", () => Clutter.EVENT_STOP)
-		actor.connect("button-release-event", () => Clutter.EVENT_STOP)
+		// NOTE: intentionally does nothing.
+		// Connecting button-press/release-event -> EVENT_STOP here (as an
+		// upstream PR once did) breaks media controls on GNOME 49+ where
+		// St.Button emits ::clicked through Clutter.PressGesture instead of
+		// the legacy button event chain. Nested St.Button semantics already
+		// keep clicks contained, so no stop wiring is needed.
 		return actor
 	}
 }
@@ -765,6 +792,13 @@ namespace MediaItem {
 
 // #region MediaList
 class MediaList extends St.BoxLayout {
+	// Drag machinery consults this before arming: presses on the current
+	// item's controls (media buttons, seek slider, header) must not become
+	// swipes. Uses geometric hit-testing because GNOME 50 delivers
+	// event.get_source() === null in this path.
+	dfunc_drag_filter(event: Clutter.Event): boolean {
+		return this._current?._isPointOnControl(event) ?? false
+	}
 	_options: MediaList.Options
 	_current?: MediaItem
 	_currentMaxPage: number
@@ -848,7 +882,7 @@ class MediaList extends St.BoxLayout {
 		}
 
 		// Enabled
-		const effect = this._effect = new RoundClipEffect()
+		const effect = this._effect = createRoundClipEffect()
 		effect.enabled = false
 		this.add_effect_with_name("round-clip", effect)
 		effect.connectObject("notify::enabled", ()=>{

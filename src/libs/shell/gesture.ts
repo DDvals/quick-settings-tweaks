@@ -8,22 +8,46 @@ export abstract class Drag extends St.Bin {
 	_dragStartCoords: Drag.Coords
 	_dragMoveStartCoords: Drag.Coords
 	_grab: Clutter.Grab
-	_grabbedDevice: Clutter.InputDevice
+	_grabbedDevice: Clutter.InputDevice | null
 	_grabbedSequence: Clutter.EventSequence
 	dfunc_drag_end: (event: Drag.Event)=>void
 	dfunc_drag_start: (event: Drag.Event)=>void
 	dfunc_drag_motion: (event: Drag.Event)=>void
+	// Optional: return true to refuse starting the drag for this press
+	dfunc_drag_filter?: (event: Clutter.Event)=>boolean
 
 	_dragStart(event: Clutter.Event): boolean {
+		// On GNOME 49+ St.Button emits ::clicked via Clutter.PressGesture but
+		// press events still bubble to us; starting a drag for a press that
+		// landed on a button would grab the stage and stick the drag armed
+		// after release (widget then follows hover). Let button presses go.
+		// (Note: event.get_source() is null on GNOME 50 in this path, so this
+		// only acts when the source is actually known; MediaList relies on
+		// dfunc_drag_filter for the general case.)
+		let walk: any = (event as any).get_source?.()
+		while (walk && walk !== this && walk.get_parent) {
+			if (walk instanceof St.Button) {
+				return Clutter.EVENT_PROPAGATE
+			}
+			walk = walk.get_parent()
+		}
+
+		if (this.dfunc_drag_filter && this.dfunc_drag_filter(event)) {
+			return Clutter.EVENT_PROPAGATE
+		}
+
 		if (this._dragging) return Clutter.EVENT_PROPAGATE
 		this._dragging = true
 		this._dragIsClick = true
 		this._dragStartCoords = event.get_coords()
-		this._grabbedDevice = event.get_device()
+		// clutter_event_get_device was removed in GNOME 50's Clutter and its
+		// absence here threw after _dragging was already set, leaving the
+		// drag armed with no way to release it (widget followed hover).
+		// Only touch logic uses the stored sequence, so null is safe.
+		this._grabbedDevice = (event as any).get_device?.() ?? null
 		this._grabbedSequence = event.get_event_sequence()
 
-		// @ts-expect-error Types not implemented
-		this._grab = global.stage.grab(this)
+		this._grab = (global as any).stage.grab(this)
 
 		const dragEvent: Drag.Event = event as Drag.Event
 		dragEvent.isClick = true
