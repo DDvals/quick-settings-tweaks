@@ -721,47 +721,35 @@ class MediaItem extends MessageList.Message {
 		})
 	}
 
-	// Whether a press/release landed on one of this item's interactive
-	// controls (header, media buttons, seek slider) rather than the free
-	// media area. Controls must not bubble presses up into MediaList's
-	// drag machinery, while presses on the free area should keep starting
-	// the swipe-drag.
-	_isPressOnControl(event: Clutter.Event): boolean {
-		const source = (event as any).get_source?.() ?? (event as any).get_source_actor?.()
-		if (!source) return false
-		const controls = [
+	// Interactive children of this item (header, media buttons, seek slider)
+	_interactiveControls(): any[] {
+		return [
 			(this as any)._header,
 			...(((this as any)._mediaControls?.get_children?.() ?? [])),
 			this._progressControl?._slider,
-		].filter(control => control != null)
-		let actor: any = source
-		while (actor && actor !== this && actor.get_parent) {
-			if (controls.includes(actor)) return true
-			actor = actor.get_parent()
+		].filter((control: any) => control != null && !control.is_finalized)
+	}
+
+	// Whether the press/release point lies within an interactive control.
+	// Uses geometric hit-testing: GNOME 50 no longer delivers a usable
+	// event.get_source() here (observed undefined in-shell).
+	_isPointOnControl(event: Clutter.Event): boolean {
+		const [gx, gy] = event.get_coords()
+		for (const control of this._interactiveControls()) {
+			const [x, y] = control.transform_stage_point(gx, gy)
+			if (x >= 0 && y >= 0 && x <= control.width && y <= control.height) {
+				return true
+			}
 		}
 		return false
 	}
 
-	// Pass all gesture actions to the parent, except presses on controls
-	vfunc_button_press_event(event: Clutter.Event): boolean {
-		return this._isPressOnControl(event)
-			? Clutter.EVENT_STOP
-			: Clutter.EVENT_PROPAGATE
+	// Pass all gesture actions to the parent
+	vfunc_button_press_event(_event: Clutter.Event): boolean {
+		return Clutter.EVENT_PROPAGATE
 	}
-	vfunc_button_release_event(event: Clutter.Event): boolean {
-		const onControl = this._isPressOnControl(event)
-		if (!onControl) {
-			// On GNOME 49+ the press/release is targeted at this St.Button
-			// (Message) and is not re-delivered to MediaList, leaving its
-			// Drag machinery stuck armed (hover would then move the widget).
-			// Explicitly finish the parent's drag; the call is a no-op when
-			// the release already reached MediaList normally.
-			const parent: any = this.get_parent()
-			if (parent?._dragging && parent?._dragEnd) parent._dragEnd(event)
-		}
-		return onControl
-			? Clutter.EVENT_STOP
-			: Clutter.EVENT_PROPAGATE
+	vfunc_button_release_event(_event: Clutter.Event): boolean {
+		return Clutter.EVENT_PROPAGATE
 	}
 	vfunc_motion_event(_event: Clutter.Event): boolean {
 		return Clutter.EVENT_PROPAGATE
@@ -804,6 +792,13 @@ namespace MediaItem {
 
 // #region MediaList
 class MediaList extends St.BoxLayout {
+	// Drag machinery consults this before arming: presses on the current
+	// item's controls (media buttons, seek slider, header) must not become
+	// swipes. Uses geometric hit-testing because GNOME 50 delivers
+	// event.get_source() === null in this path.
+	dfunc_drag_filter(event: Clutter.Event): boolean {
+		return this._current?._isPointOnControl(event) ?? false
+	}
 	_options: MediaList.Options
 	_current?: MediaItem
 	_currentMaxPage: number
