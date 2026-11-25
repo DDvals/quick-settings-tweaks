@@ -749,7 +749,17 @@ class MediaItem extends MessageList.Message {
 			: Clutter.EVENT_PROPAGATE
 	}
 	vfunc_button_release_event(event: Clutter.Event): boolean {
-		return this._isPressOnControl(event)
+		const onControl = this._isPressOnControl(event)
+		if (!onControl) {
+			// On GNOME 49+ the press/release is targeted at this St.Button
+			// (Message) and is not re-delivered to MediaList, leaving its
+			// Drag machinery stuck armed (hover would then move the widget).
+			// Explicitly finish the parent's drag; the call is a no-op when
+			// the release already reached MediaList normally.
+			const parent: any = this.get_parent()
+			if (parent?._dragging && parent?._dragEnd) parent._dragEnd(event)
+		}
+		return onControl
 			? Clutter.EVENT_STOP
 			: Clutter.EVENT_PROPAGATE
 	}
